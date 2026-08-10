@@ -1,0 +1,21 @@
+{
+  "name": "kepler",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "bun --filter '*' dev",
+    "server:dev": "bun --filter server dev",
+    "server:start": "bun --filter server start",
+    "server:migrate:up": "bun --filter server migrate:up",
+    "server:migrate:down": "bun --filter server migrate:down",
+    "server:migrate:generate": "bun --filter server migrate:generate",
+    "web:dev": "bun --filter web dev",
+    "web:build": "bun --filter web build",
+    "test": "bun test",
+    "typecheck": "bun --filter '*' typecheck",
+    "format": "bunx prettier --write \"apps/**/*.{ts,tsx,css}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1"
+  }
+}

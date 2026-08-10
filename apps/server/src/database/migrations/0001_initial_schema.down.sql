@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS feedback;
+DROP TABLE IF EXISTS report_items;
+DROP TABLE IF EXISTS reports;
+DROP TABLE IF EXISTS workflow_run_findings;
+DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS agent_runs;
+DROP TABLE IF EXISTS workflow_runs;
+DROP TABLE IF EXISTS schedules;
+DROP TABLE IF EXISTS workflow_steps;
+DROP TABLE IF EXISTS workflows;
+DROP TABLE IF EXISTS agent_definition_versions;
+DROP TABLE IF EXISTS agent_definitions;
+DROP TABLE IF EXISTS profile_observations;
+DROP TABLE IF EXISTS profiles;
+DROP TABLE IF EXISTS users;

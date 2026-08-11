@@ -1,5 +1,6 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { newId } from '../database';
+import { Analyst } from '../agents/definitions/analyst';
 import { GitHubScanner } from '../agents/definitions/githubScanner';
 import { PaperScanner } from '../agents/definitions/paperScanner';
 import {
@@ -17,6 +18,9 @@ import {
   workflowSteps,
 } from '../database/schema';
 import type { AppState } from '../state';
+import { createLogger } from '../utils';
+
+const log = createLogger('service:kepler-workflow');
 
 const agents = [
   [
@@ -27,7 +31,10 @@ const agents = [
     'paper-scanner',
     'Discover worthwhile research papers, technical blogs, and engineering resources.',
   ],
-  ['analyst', 'Normalize and analyze candidate findings.'],
+  [
+    'analyst',
+    'Extract technical insights, trade-offs, and practical relevance from findings.',
+  ],
   ['judge', 'Validate quality, credibility, and feasibility.'],
   ['curator', 'Rank findings against the supplied user profile.'],
   ['reporter', 'Explain selected findings and recommend next actions.'],
@@ -320,9 +327,20 @@ export class KeplerService {
       .limit(1);
     if (!report) throw new Error('report not found');
     const items = await this.state.database
-      .select({ item: reportItems, finding: findings })
+      .select({
+        item: reportItems,
+        finding: findings,
+        stageData: workflowRunFindings.stageData,
+      })
       .from(reportItems)
       .innerJoin(findings, eq(reportItems.findingId, findings.id))
+      .leftJoin(
+        workflowRunFindings,
+        and(
+          eq(workflowRunFindings.findingId, findings.id),
+          eq(workflowRunFindings.workflowRunId, report.workflowRunId),
+        ),
+      )
       .where(eq(reportItems.reportId, report.id))
       .orderBy(asc(reportItems.position));
     return { ...report, items };
@@ -408,6 +426,8 @@ export class KeplerService {
   }
 
   async executeMockWorkflow(workflowRunId: string) {
+    const workflowStartedAt = Date.now();
+    log.info({ workflowRunId }, 'workflow execution started');
     const [run] = await this.state.database
       .select()
       .from(workflowRuns)
@@ -445,8 +465,28 @@ export class KeplerService {
           ),
         )
         .limit(1);
-      if (existing?.status === 'completed') continue;
+      if (existing?.status === 'completed') {
+        log.info(
+          {
+            workflowRunId,
+            agentSlug: definition.slug,
+            agentRunId: existing.id,
+          },
+          'completed workflow step skipped',
+        );
+        continue;
+      }
       const agentRunId = existing?.id ?? newId('arun');
+      const stepStartedAt = Date.now();
+      log.info(
+        {
+          workflowRunId,
+          agentSlug: definition.slug,
+          agentRunId,
+          attempt: existing ? existing.attempt + 1 : 1,
+        },
+        'workflow step started',
+      );
       if (!existing) {
         await this.state.database.insert(agentRuns).values({
           id: agentRunId,
@@ -470,6 +510,7 @@ export class KeplerService {
       }
       let output: Record<string, unknown>;
       if (definition.slug === 'github-scanner') {
+        log.info({ workflowRunId, agentRunId }, 'GitHub scan request started');
         const result = await new GitHubScanner().scan(
           run.profileSnapshot as Parameters<GitHubScanner['scan']>[0],
           12,
@@ -484,6 +525,7 @@ export class KeplerService {
           rateLimit: result.rateLimit,
         };
       } else if (definition.slug === 'paper-scanner') {
+        log.info({ workflowRunId, agentRunId }, 'paper scan request started');
         const result = await new PaperScanner().scan(
           run.profileSnapshot as Parameters<PaperScanner['scan']>[0],
           12,
@@ -497,6 +539,50 @@ export class KeplerService {
           findingCount: result.findings.length,
           provider: 'arxiv',
         };
+      } else if (definition.slug === 'analyst') {
+        const candidates = await this.state.database
+          .select({
+            finding: findings,
+            stageData: workflowRunFindings.stageData,
+          })
+          .from(workflowRunFindings)
+          .innerJoin(findings, eq(workflowRunFindings.findingId, findings.id))
+          .where(eq(workflowRunFindings.workflowRunId, run.id));
+        log.info(
+          { workflowRunId, agentRunId, findingCount: candidates.length },
+          'analyst batch dispatch started',
+        );
+        const result = await new Analyst().analyze(
+          run.profileSnapshot as Parameters<Analyst['analyze']>[0],
+          candidates.map(({ finding }) => finding),
+        );
+        const stageDataById = new Map(
+          candidates.map(({ finding, stageData }) => [finding.id, stageData]),
+        );
+        for (const { findingId, analysis } of result.analyses) {
+          const previous = stageDataById.get(findingId);
+          await this.state.database
+            .update(workflowRunFindings)
+            .set({
+              stage: 'analyzed',
+              stageData: {
+                ...(previous && typeof previous === 'object' ? previous : {}),
+                analysis,
+                analyzedByRunId: agentRunId,
+              },
+            })
+            .where(
+              and(
+                eq(workflowRunFindings.workflowRunId, run.id),
+                eq(workflowRunFindings.findingId, findingId),
+              ),
+            );
+        }
+        output = {
+          summary: `Analyzed ${result.analyses.length} findings.`,
+          findingCount: result.analyses.length,
+          tokenUsage: result.tokenUsage,
+        };
       } else {
         await Bun.sleep(120);
         output = { summary: `${definition.name} completed its mock pass.` };
@@ -506,10 +592,25 @@ export class KeplerService {
         .set({
           status: 'completed',
           output,
-          tokenUsage: { inputTokens: 0, outputTokens: 0 },
+          tokenUsage:
+            definition.slug === 'analyst' && 'tokenUsage' in output
+              ? (output.tokenUsage as {
+                  inputTokens: number;
+                  outputTokens: number;
+                })
+              : { inputTokens: 0, outputTokens: 0 },
           completedAt: new Date().toISOString(),
         })
         .where(eq(agentRuns.id, agentRunId));
+      log.info(
+        {
+          workflowRunId,
+          agentSlug: definition.slug,
+          agentRunId,
+          durationMs: Date.now() - stepStartedAt,
+        },
+        'workflow step completed',
+      );
     }
 
     const savedFindings = await this.state.database
@@ -576,5 +677,9 @@ export class KeplerService {
         completedAt: new Date().toISOString(),
       })
       .where(eq(workflowRuns.id, run.id));
+    log.info(
+      { workflowRunId, durationMs: Date.now() - workflowStartedAt },
+      'workflow execution completed',
+    );
   }
 }

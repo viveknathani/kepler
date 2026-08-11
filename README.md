@@ -41,4 +41,4 @@ The first workflow is deliberately mocked while the platform is established:
 profile → workflow → BullMQ run → agent checkpoints → findings → report → feedback
 ```
 
-`github-scanner` uses GitHub's REST Search API for real repository, issue, and pull-request findings. Add `GITHUB_TOKEN` to `.env` for authenticated rate limits; unauthenticated development scans also work at lower limits. The paper scanner and downstream reasoning stages remain mocked.
+`github-scanner` uses GitHub's REST Search API for real repository, issue, and pull-request findings. Add `GITHUB_TOKEN` to `.env` for authenticated rate limits; unauthenticated development scans also work at lower limits. `paper-scanner` uses arXiv's public Atom API for recent papers matching profile interests and goals. The downstream reasoning stages remain mocked.

@@ -71,6 +71,9 @@ export default function ReportPage() {
           <tbody className="divide-y">
             {report.items.map(({ item, finding, stageData }, index) => {
               const analysis = stageData?.analysis;
+              const lesson = item.metadata?.report;
+              const judgment = item.metadata?.judgment;
+              const selection = item.metadata?.selection;
               return (
                 <tr key={item.id} className="group align-top hover:bg-muted/40">
                   <td className="px-3 py-3 text-[10px] text-muted-foreground">
@@ -96,6 +99,40 @@ export default function ReportPage() {
                         <p className="text-xs leading-5 text-muted-foreground">
                           {item.summary}
                         </p>
+                        {lesson && (
+                          <div className="mt-4 grid gap-4 text-xs sm:grid-cols-2">
+                            <ReportSection title="Systems principle">
+                              {lesson.systemsPrinciple}
+                            </ReportSection>
+                            <ReportSection title="How it works">
+                              {lesson.mechanism}
+                            </ReportSection>
+                            <AnalysisList
+                              title="Trade-offs & failure modes"
+                              items={lesson.tradeOffsAndFailureModes}
+                            />
+                            <ReportSection title="Engineering challenge">
+                              {lesson.engineeringChallenge}
+                            </ReportSection>
+                            <ReportSection title="Prior knowledge">
+                              {lesson.priorKnowledgeConnection}
+                            </ReportSection>
+                            <ReportSection title="Reflection question">
+                              {lesson.reflectionQuestion}
+                            </ReportSection>
+                            <div className="sm:col-span-2 border border-primary/20 bg-primary/5 p-3">
+                              <AnalysisHeading>
+                                {lesson.activity.type} activity
+                              </AnalysisHeading>
+                              <p className="mt-1 leading-5 text-muted-foreground">
+                                {lesson.activity.instruction}
+                              </p>
+                              <p className="mt-2 leading-5 text-foreground/80">
+                                Done when: {lesson.activity.successCriterion}
+                              </p>
+                            </div>
+                          </div>
+                        )}
                         {analysis ? (
                           <div className="mt-4 grid gap-4 text-xs sm:grid-cols-2">
                             <AnalysisList
@@ -145,6 +182,17 @@ export default function ReportPage() {
                   <td className="px-3 py-3 text-[10px] text-muted-foreground">
                     Q {Math.round((item.scores.quality ?? 0) * 100)} / R{' '}
                     {Math.round((item.scores.readiness ?? 0) * 100)}
+                    {selection && (
+                      <span className="mt-1 block">
+                        {selection.lane} · {selection.estimatedMinutes}m
+                      </span>
+                    )}
+                    {judgment && (
+                      <span className="mt-1 block">
+                        {judgment.difficulty} ·{' '}
+                        {Math.round(judgment.confidence * 100)}% conf.
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-right text-xs font-semibold text-primary">
                     {Math.round((item.scores.interest ?? 0) * 100)}%
@@ -219,6 +267,21 @@ function AnalysisList({ title, items }: { title: string; items: string[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function ReportSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <AnalysisHeading>{title}</AnalysisHeading>
+      <p className="mt-1 leading-5 text-muted-foreground">{children}</p>
     </div>
   );
 }

@@ -35,10 +35,10 @@ Development authentication uses `BY_PASS_AUTH_CLERK_USER_ID`. Configure Clerk ke
 
 ## Current vertical slice
 
-The first workflow is deliberately mocked while the platform is established:
+The first workflow is a live, checkpointed learning pipeline:
 
 ```text
 profile → workflow → BullMQ run → agent checkpoints → findings → report → feedback
 ```
 
-`github-scanner` uses GitHub's REST Search API for real repository, issue, and pull-request findings. Add `GITHUB_TOKEN` to `.env` for authenticated rate limits; unauthenticated development scans also work at lower limits. `paper-scanner` uses arXiv's public Atom API for recent papers matching profile interests and goals. The downstream reasoning stages remain mocked.
+`github-scanner` uses GitHub's REST Search API for real repository, issue, and pull-request findings. Add `GITHUB_TOKEN` to `.env` for authenticated rate limits; unauthenticated development scans also work at lower limits. `paper-scanner` uses arXiv's public Atom API for recent papers matching profile interests and goals. `analyst`, `judge`, `curator`, and `reporter` produce structured, schema-validated learning artifacts. Deep analysis is bounded to the strongest discovery candidates, curation respects item and time budgets, and reports include systems principles, trade-offs, challenges, exercises, and observable success criteria.

@@ -1,8 +1,11 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { newId } from '../database';
 import { Analyst } from '../agents/definitions/analyst';
+import { Curator } from '../agents/definitions/curator';
 import { GitHubScanner } from '../agents/definitions/githubScanner';
+import { Judge } from '../agents/definitions/judge';
 import { PaperScanner } from '../agents/definitions/paperScanner';
+import { Reporter } from '../agents/definitions/reporter';
 import {
   agentDefinitions,
   agentRuns,
@@ -35,9 +38,18 @@ const agents = [
     'analyst',
     'Extract technical insights, trade-offs, and practical relevance from findings.',
   ],
-  ['judge', 'Validate quality, credibility, and feasibility.'],
-  ['curator', 'Rank findings against the supplied user profile.'],
-  ['reporter', 'Explain selected findings and recommend next actions.'],
+  [
+    'judge',
+    'Score evidence, learning value, novelty, relevance, and practicality.',
+  ],
+  [
+    'curator',
+    'Select a diverse learning queue under an explicit attention budget.',
+  ],
+  [
+    'reporter',
+    'Turn selected findings into durable systems-engineering lessons and exercises.',
+  ],
 ] as const;
 
 export class KeplerService {
@@ -101,10 +113,12 @@ export class KeplerService {
           userId,
           profileId: profile!.id,
           name: 'Research radar',
-          description: 'Find things worth reading and building.',
+          description:
+            'Build systems-engineering judgment through evidence and practice.',
           status: 'active',
           configuration: {
             reportSize: 6,
+            learningMinutes: 180,
             contentMix: { read: 0.5, build: 0.5 },
           },
         })
@@ -540,7 +554,7 @@ export class KeplerService {
           provider: 'arxiv',
         };
       } else if (definition.slug === 'analyst') {
-        const candidates = await this.state.database
+        const discovered = await this.state.database
           .select({
             finding: findings,
             stageData: workflowRunFindings.stageData,
@@ -548,6 +562,13 @@ export class KeplerService {
           .from(workflowRunFindings)
           .innerJoin(findings, eq(workflowRunFindings.findingId, findings.id))
           .where(eq(workflowRunFindings.workflowRunId, run.id));
+        const candidates = discovered
+          .sort(
+            (a, b) =>
+              Number(this.stageObject(b.stageData).scannerScore ?? 0) -
+              Number(this.stageObject(a.stageData).scannerScore ?? 0),
+          )
+          .slice(0, 10);
         log.info(
           { workflowRunId, agentRunId, findingCount: candidates.length },
           'analyst batch dispatch started',
@@ -583,6 +604,115 @@ export class KeplerService {
           findingCount: result.analyses.length,
           tokenUsage: result.tokenUsage,
         };
+      } else if (definition.slug === 'judge') {
+        const candidates = (await this.loadRunCandidates(run.id)).filter(
+          ({ stageData }) => 'analysis' in this.stageObject(stageData),
+        );
+        const result = await new Judge().judge(
+          run.profileSnapshot as Parameters<Judge['judge']>[0],
+          candidates.map(({ finding, stageData }) => ({
+            ...finding,
+            analysis: this.requireStageField(stageData, 'analysis', finding.id),
+          })),
+        );
+        const stageDataById = new Map(
+          candidates.map(({ finding, stageData }) => [finding.id, stageData]),
+        );
+        for (const { findingId, judgment } of result.judgments) {
+          await this.updateRunFindingStage(run.id, findingId, 'judged', {
+            ...this.stageObject(stageDataById.get(findingId)),
+            judgment,
+            judgedByRunId: agentRunId,
+          });
+        }
+        output = {
+          summary: `Judged ${result.judgments.length} findings.`,
+          findingCount: result.judgments.length,
+          tokenUsage: result.tokenUsage,
+        };
+      } else if (definition.slug === 'curator') {
+        const candidates = (await this.loadRunCandidates(run.id)).filter(
+          ({ stageData }) => 'judgment' in this.stageObject(stageData),
+        );
+        const workflowConfiguration = this.stageObject(
+          (run.workflowSnapshot as { configuration?: unknown }).configuration,
+        );
+        const budget = {
+          maxItems: this.positiveInteger(workflowConfiguration.reportSize, 6),
+          maxMinutes: this.positiveInteger(
+            workflowConfiguration.learningMinutes,
+            180,
+          ),
+        };
+        const result = await new Curator().curate(
+          run.profileSnapshot,
+          candidates.map(({ finding, stageData }) => ({
+            ...finding,
+            analysis: this.requireStageField(stageData, 'analysis', finding.id),
+            judgment: this.requireStageField(stageData, 'judgment', finding.id),
+          })),
+          budget,
+        );
+        const selections = new Map(
+          result.curation.selections.map((item) => [item.findingId, item]),
+        );
+        for (const { finding, stageData } of candidates) {
+          const selection = selections.get(finding.id);
+          await this.updateRunFindingStage(
+            run.id,
+            finding.id,
+            selection ? 'selected' : 'excluded',
+            {
+              ...this.stageObject(stageData),
+              ...(selection ? { selection } : {}),
+              curationReason:
+                selection?.reason ??
+                result.curation.exclusions.find(
+                  (item) => item.findingId === finding.id,
+                )?.reason ??
+                'Not selected under the current learning budget.',
+              curatedByRunId: agentRunId,
+            },
+          );
+        }
+        output = {
+          summary: `Selected ${result.curation.selections.length} of ${candidates.length} findings.`,
+          curation: result.curation,
+          tokenUsage: result.tokenUsage,
+        };
+      } else if (definition.slug === 'reporter') {
+        const candidates = (await this.loadRunCandidates(run.id)).filter(
+          ({ stageData }) => 'selection' in this.stageObject(stageData),
+        );
+        if (!candidates.length) throw new Error('curator selected no findings');
+        const result = await new Reporter().report(
+          run.profileSnapshot,
+          candidates.map(({ finding, stageData }) => ({
+            ...finding,
+            analysis: this.requireStageField(stageData, 'analysis', finding.id),
+            judgment: this.requireStageField(stageData, 'judgment', finding.id),
+            selection: this.requireStageField(
+              stageData,
+              'selection',
+              finding.id,
+            ),
+          })),
+        );
+        const reportById = new Map(
+          result.report.items.map((item) => [item.findingId, item]),
+        );
+        for (const { finding, stageData } of candidates) {
+          await this.updateRunFindingStage(run.id, finding.id, 'reported', {
+            ...this.stageObject(stageData),
+            report: reportById.get(finding.id),
+            reportedByRunId: agentRunId,
+          });
+        }
+        output = {
+          summary: result.report.summary,
+          report: result.report,
+          tokenUsage: result.tokenUsage,
+        };
       } else {
         await Bun.sleep(120);
         output = { summary: `${definition.name} completed its mock pass.` };
@@ -593,7 +723,7 @@ export class KeplerService {
           status: 'completed',
           output,
           tokenUsage:
-            definition.slug === 'analyst' && 'tokenUsage' in output
+            'tokenUsage' in output
               ? (output.tokenUsage as {
                   inputTokens: number;
                   outputTokens: number;
@@ -613,11 +743,40 @@ export class KeplerService {
       );
     }
 
-    const savedFindings = await this.state.database
-      .select({ finding: findings, stageData: workflowRunFindings.stageData })
-      .from(workflowRunFindings)
-      .innerJoin(findings, eq(workflowRunFindings.findingId, findings.id))
-      .where(eq(workflowRunFindings.workflowRunId, run.id));
+    const savedFindings = (
+      await this.state.database
+        .select({ finding: findings, stageData: workflowRunFindings.stageData })
+        .from(workflowRunFindings)
+        .innerJoin(findings, eq(workflowRunFindings.findingId, findings.id))
+        .where(eq(workflowRunFindings.workflowRunId, run.id))
+    )
+      .filter(({ stageData }) => 'report' in this.stageObject(stageData))
+      .sort((a, b) => {
+        const aSelection = this.stageObject(
+          this.stageObject(a.stageData).selection,
+        );
+        const bSelection = this.stageObject(
+          this.stageObject(b.stageData).selection,
+        );
+        return (
+          Number(aSelection.position ?? 0) - Number(bSelection.position ?? 0)
+        );
+      });
+
+    if (!savedFindings.length)
+      throw new Error('reporter produced no reportable findings');
+    const reporterRun = await this.state.database
+      .select()
+      .from(agentRuns)
+      .where(
+        and(
+          eq(agentRuns.workflowRunId, run.id),
+          eq(agentRuns.agentSlug, 'reporter'),
+        ),
+      )
+      .limit(1);
+    const reporterOutput = this.stageObject(reporterRun[0]?.output);
+    const learningReport = this.stageObject(reporterOutput.report);
 
     const [report] = await this.state.database
       .insert(reports)
@@ -625,9 +784,16 @@ export class KeplerService {
         id: newId('report'),
         userId: run.userId,
         workflowRunId: run.id,
-        title: 'Research radar',
-        summary: 'All findings discovered during this run.',
+        title:
+          typeof learningReport.title === 'string'
+            ? learningReport.title
+            : 'Systems engineering learning radar',
+        summary:
+          typeof learningReport.summary === 'string'
+            ? learningReport.summary
+            : 'Selected systems-engineering lessons.',
         status: 'published',
+        metadata: { itemCount: savedFindings.length, generatedBy: 'reporter' },
         publishedAt: new Date().toISOString(),
       })
       .onConflictDoUpdate({
@@ -642,31 +808,45 @@ export class KeplerService {
       .where(eq(reportItems.reportId, report!.id));
     if (!existingItems.length) {
       await this.state.database.insert(reportItems).values(
-        savedFindings.map(({ finding, stageData }, index) => ({
-          id: newId('ritem'),
-          reportId: report!.id,
-          findingId: finding.id,
-          position: index + 1,
-          headline: finding.title,
-          summary: finding.summary ?? '',
-          reason: finding.sourceType.startsWith('github_')
-            ? 'Fresh GitHub activity matching the explicit profile interests.'
-            : 'A potentially useful reading direction matching the profile.',
-          nextSteps:
-            finding.contentKind === 'build'
-              ? [
-                  'Read the issue discussion',
-                  'Inspect the surrounding code path',
-                ]
-              : ['Open the source', 'Decide whether it merits a deeper pass'],
-          scores: {
-            interest: Math.max(0.5, 0.92 - index * 0.04),
-            readiness: finding.contentKind === 'build' ? 0.7 : 0.8,
-            quality:
-              (stageData as { scannerScore?: number } | null)?.scannerScore ??
-              0.7,
-          },
-        })),
+        savedFindings.map(({ finding, stageData }, index) => {
+          const generatedItem = this.requireStageField(
+            stageData,
+            'report',
+            finding.id,
+          );
+          const judgment = this.requireStageField(
+            stageData,
+            'judgment',
+            finding.id,
+          );
+          const selection = this.requireStageField(
+            stageData,
+            'selection',
+            finding.id,
+          );
+          const scores = this.stageObject(judgment.scores);
+          const activity = this.stageObject(generatedItem.activity);
+          return {
+            id: newId('ritem'),
+            reportId: report!.id,
+            findingId: finding.id,
+            position: index + 1,
+            headline: String(generatedItem.headline ?? finding.title),
+            summary: String(
+              generatedItem.executiveSummary ?? finding.summary ?? '',
+            ),
+            reason: String(selection.reason ?? ''),
+            nextSteps: [String(activity.instruction ?? '')].filter(Boolean),
+            scores: {
+              interest: Number(scores.relevance ?? 0),
+              readiness: Number(scores.practicality ?? 0),
+              quality: Number(scores.technicalQuality ?? 0),
+              credibility: Number(scores.credibility ?? 0),
+              learningValue: Number(scores.learningValue ?? 0),
+            },
+            metadata: { report: generatedItem, judgment, selection },
+          };
+        }),
       );
     }
 
@@ -681,5 +861,53 @@ export class KeplerService {
       { workflowRunId, durationMs: Date.now() - workflowStartedAt },
       'workflow execution completed',
     );
+  }
+
+  private loadRunCandidates(runId: string) {
+    return this.state.database
+      .select({ finding: findings, stageData: workflowRunFindings.stageData })
+      .from(workflowRunFindings)
+      .innerJoin(findings, eq(workflowRunFindings.findingId, findings.id))
+      .where(eq(workflowRunFindings.workflowRunId, runId));
+  }
+
+  private updateRunFindingStage(
+    runId: string,
+    findingId: string,
+    stage: string,
+    stageData: Record<string, unknown>,
+  ) {
+    return this.state.database
+      .update(workflowRunFindings)
+      .set({ stage, stageData })
+      .where(
+        and(
+          eq(workflowRunFindings.workflowRunId, runId),
+          eq(workflowRunFindings.findingId, findingId),
+        ),
+      );
+  }
+
+  private stageObject(value: unknown): Record<string, any> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, any>)
+      : {};
+  }
+
+  private requireStageField(
+    stageData: unknown,
+    field: string,
+    findingId: string,
+  ): any {
+    const value = this.stageObject(stageData)[field];
+    if (!value || typeof value !== 'object')
+      throw new Error(`finding ${findingId} is missing ${field}`);
+    return value;
+  }
+
+  private positiveInteger(value: unknown, fallback: number) {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0
+      ? value
+      : fallback;
   }
 }

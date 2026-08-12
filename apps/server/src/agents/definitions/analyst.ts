@@ -66,34 +66,41 @@ export class Analyst {
 
     log.info({ findingCount: findings.length }, 'analysis batch started');
 
-    for (const [index, finding] of findings.entries()) {
-      const startedAt = Date.now();
-      log.info(
-        {
-          findingId: finding.id,
-          sourceType: finding.sourceType,
-          position: index + 1,
-          findingCount: findings.length,
-        },
-        'finding analysis started',
-      );
-      const result = await this.analyzeFinding(
-        buildAnalystPrompt(profile, finding),
-      );
-      analyses.push({ findingId: finding.id, analysis: result.analysis });
+    const completed = await mapWithConcurrency(
+      findings,
+      3,
+      async (finding, index) => {
+        const startedAt = Date.now();
+        log.info(
+          {
+            findingId: finding.id,
+            sourceType: finding.sourceType,
+            position: index + 1,
+            findingCount: findings.length,
+          },
+          'finding analysis started',
+        );
+        const result = await this.analyzeFinding(
+          buildAnalystPrompt(profile, finding),
+        );
+        log.info(
+          {
+            findingId: finding.id,
+            position: index + 1,
+            findingCount: findings.length,
+            durationMs: Date.now() - startedAt,
+            inputTokens: result.usage?.inputTokens ?? 0,
+            outputTokens: result.usage?.outputTokens ?? 0,
+          },
+          'finding analysis completed',
+        );
+        return { findingId: finding.id, result };
+      },
+    );
+    for (const { findingId, result } of completed) {
+      analyses.push({ findingId, analysis: result.analysis });
       inputTokens += result.usage?.inputTokens ?? 0;
       outputTokens += result.usage?.outputTokens ?? 0;
-      log.info(
-        {
-          findingId: finding.id,
-          position: index + 1,
-          findingCount: findings.length,
-          durationMs: Date.now() - startedAt,
-          inputTokens: result.usage?.inputTokens ?? 0,
-          outputTokens: result.usage?.outputTokens ?? 0,
-        },
-        'finding analysis completed',
-      );
     }
 
     log.info(
@@ -139,7 +146,7 @@ async function defaultAnalyzeFinding(prompt: string) {
     system: analystSystemPrompt,
     prompt,
     output: Output.object({ schema: analysisSchema }),
-    timeout: 60_000,
+    timeout: 180_000,
   });
   return {
     analysis: result.output,
@@ -158,4 +165,22 @@ function safeJson(value: unknown, maxLength: number) {
     return item;
   });
   return (json ?? 'null').slice(0, maxLength);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++;
+        results[index] = await mapper(items[index]!, index);
+      }
+    }),
+  );
+  return results;
 }

@@ -52,6 +52,27 @@ export type ReportItem = {
     reason: string;
     scores: Record<string, number>;
     nextSteps: string[];
+    metadata?: {
+      report?: {
+        systemsPrinciple: string;
+        mechanism: string;
+        tradeOffsAndFailureModes: string[];
+        engineeringChallenge: string;
+        priorKnowledgeConnection: string;
+        reflectionQuestion: string;
+        activity: {
+          type: string;
+          instruction: string;
+          successCriterion: string;
+        };
+      };
+      judgment?: {
+        confidence: number;
+        difficulty: string;
+        concerns: string[];
+      };
+      selection?: { lane: string; estimatedMinutes: number };
+    };
   };
   finding: {
     sourceType: string;

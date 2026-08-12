@@ -29,6 +29,30 @@ export type Run = {
   createdAt: string;
   completedAt: string | null;
 };
+export type AgentSummary = {
+  slug: string;
+  name: string;
+  description: string;
+  averageDurationMs: number | null;
+  averageTokenUsage: number | null;
+};
+export type AgentRun = {
+  id: string;
+  workflowRunId: string;
+  status: string;
+  attempt: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string | null;
+  provider: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+};
+export type AgentRunDetail = {
+  agent: Pick<AgentSummary, 'slug' | 'name' | 'description'>;
+  runs: AgentRun[];
+};
 export type ReportSummary = {
   id: string;
   title: string;

@@ -57,7 +57,7 @@ export default function ReportPage() {
       </div>
       <div className="overflow-x-auto border bg-card">
         <table className="w-full min-w-[980px] border-collapse text-left">
-          <thead className="bg-muted/70 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+          <thead className="bg-muted/45 text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
             <tr>
               <th className="w-12 border-b px-3 py-3">#</th>
               <th className="w-24 border-b px-3 py-3">Class</th>

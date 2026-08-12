@@ -1,18 +1,18 @@
 @import 'tailwindcss';
 
 :root {
-  --background: #000000;
-  --foreground: #ededed;
-  --card: #0a0a0a;
-  --card-foreground: #ededed;
-  --muted: #1f1f1f;
-  --muted-foreground: #8f8f8f;
-  --border: #2a2a2a;
-  --primary: #37a44b;
-  --primary-foreground: #08120a;
-  --ring: #37a44b;
-  --font-geist: "Roboto", Arial, sans-serif;
-  --font-mono: "Roboto", Arial, sans-serif;
+  --background: #111214;
+  --foreground: #e7e9ec;
+  --card: #17191c;
+  --card-foreground: #e7e9ec;
+  --muted: #191b1f;
+  --muted-foreground: #777b82;
+  --border: rgb(255 255 255 / 10%);
+  --primary: #7897b8;
+  --primary-foreground: #0d141c;
+  --ring: #7897b8;
+  --font-geist: 'JetBrains Mono', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
 }
 
 @theme inline {
@@ -30,7 +30,10 @@
   --font-mono: var(--font-mono);
 }
 
-* { border-color: var(--border); }
+* {
+  border-color: var(--border);
+  border-radius: 0 !important;
+}
 body {
   margin: 0;
   background-color: var(--background);
@@ -41,13 +44,26 @@ body {
   font-size: 14px;
   letter-spacing: 0;
 }
-button, a { cursor: pointer; }
-::selection { background: color-mix(in srgb, var(--primary) 30%, transparent); }
+button,
+a {
+  cursor: pointer;
+}
+::selection {
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+}
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #000; }
-::-webkit-scrollbar-thumb { background: #2a2a2a; border: 2px solid #000; }
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: #303238;
+  border: 2px solid var(--background);
+}
 
-/* Vercel-style data surfaces */
-.overflow-x-auto.border.bg-card { border-radius: 8px; }
-table tbody tr:last-child td { border-bottom: 0; }
+table tbody tr:last-child td {
+  border-bottom: 0;
+}

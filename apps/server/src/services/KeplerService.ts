@@ -145,6 +145,109 @@ export class KeplerService {
       .where(eq(profiles.userId, userId));
   }
 
+  async listAgents(userId: string) {
+    const definitions = await this.state.database
+      .select()
+      .from(agentDefinitions);
+    const runs = await this.state.database
+      .select({ run: agentRuns })
+      .from(agentRuns)
+      .innerJoin(workflowRuns, eq(agentRuns.workflowRunId, workflowRuns.id))
+      .where(eq(workflowRuns.userId, userId));
+
+    const agentOrder = new Map<string, number>(
+      agents.map(([slug], index) => [slug, index]),
+    );
+    definitions.sort(
+      (left, right) =>
+        (agentOrder.get(left.slug) ?? Number.MAX_SAFE_INTEGER) -
+        (agentOrder.get(right.slug) ?? Number.MAX_SAFE_INTEGER),
+    );
+
+    return definitions.map((definition) => {
+      const completedRuns = runs
+        .map(({ run }) => run)
+        .filter(
+          (run) =>
+            run.agentSlug === definition.slug &&
+            run.startedAt !== null &&
+            run.completedAt !== null,
+        );
+      const totals = completedRuns.reduce(
+        (summary, run) => {
+          const usage = run.tokenUsage as {
+            inputTokens?: number;
+            outputTokens?: number;
+          };
+          summary.durationMs +=
+            new Date(run.completedAt!).getTime() -
+            new Date(run.startedAt!).getTime();
+          summary.tokens +=
+            (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+          return summary;
+        },
+        { durationMs: 0, tokens: 0 },
+      );
+
+      return {
+        slug: definition.slug,
+        name: definition.name,
+        description: definition.description,
+        averageDurationMs: completedRuns.length
+          ? Math.round(totals.durationMs / completedRuns.length)
+          : null,
+        averageTokenUsage: completedRuns.length
+          ? Math.round(totals.tokens / completedRuns.length)
+          : null,
+      };
+    });
+  }
+
+  async getAgentRuns(userId: string, slug: string) {
+    const [definition] = await this.state.database
+      .select()
+      .from(agentDefinitions)
+      .where(eq(agentDefinitions.slug, slug))
+      .limit(1);
+    if (!definition) throw new Error('agent not found');
+
+    const rows = await this.state.database
+      .select({ run: agentRuns })
+      .from(agentRuns)
+      .innerJoin(workflowRuns, eq(agentRuns.workflowRunId, workflowRuns.id))
+      .where(
+        and(eq(workflowRuns.userId, userId), eq(agentRuns.agentSlug, slug)),
+      )
+      .orderBy(desc(agentRuns.createdAt));
+
+    return {
+      agent: {
+        slug: definition.slug,
+        name: definition.name,
+        description: definition.description,
+      },
+      runs: rows.map(({ run }) => {
+        const usage = run.tokenUsage as {
+          inputTokens?: number;
+          outputTokens?: number;
+        };
+        return {
+          id: run.id,
+          workflowRunId: run.workflowRunId,
+          status: run.status,
+          attempt: run.attempt,
+          inputTokens: usage.inputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
+          model: run.model,
+          provider: run.provider,
+          startedAt: run.startedAt,
+          completedAt: run.completedAt,
+          error: run.error,
+        };
+      }),
+    };
+  }
+
   async updateProfile(
     userId: string,
     profileId: string,
